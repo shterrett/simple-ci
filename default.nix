@@ -22,9 +22,9 @@ let
 in pkgs.haskell-nix.project {
   # 'cleanGit' cleans a source directory based on the files known by git
   src = pkgs.haskell-nix.haskellLib.cleanGit {
-    name = "haskell-nix-project";
+    name = "simple-ci";
     src = ./.;
   };
   # Specify the GHC version to use.
-  compiler-nix-name = "ghc922"; # Not required for `stack.yaml` based projects.
+  compiler-nix-name = "ghc8107"; # Not required for `stack.yaml` based projects.
 }

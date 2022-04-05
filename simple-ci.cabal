@@ -1,4 +1,4 @@
-cabal-version: 1.12
+cabal-version: 3.4
 
 -- This file has been generated from package.yaml by hpack version 0.34.4.
 --
@@ -22,18 +22,43 @@ source-repository head
   type: git
   location: https://github.com/githubuser/simple-ci
 
+common options
+  build-depends:
+    , aeson
+    , async
+    , base
+    , butcher
+    , generic-lens
+    , hslogger
+    , http-client
+    , http-conduit
+    , http-types
+    , lens
+    , network
+    , record-hasfield
+    , rio
+    , scotty
+    , serialise
+    , stm
+    , time
+    , typed-process
+    , wai-cors
+    , yaml
+  default-extensions:
+    NoImplicitPrelude
+
 library
+  import: options
   exposed-modules:
       Lib
   other-modules:
       Paths_simple_ci
   hs-source-dirs:
       src
-  build-depends:
-      base >=4.7 && <5
   default-language: Haskell2010
 
-executable simple-ci-exe
+executable simple-ci-server
+  import: options
   main-is: Main.hs
   other-modules:
       Paths_simple_ci
@@ -41,11 +66,11 @@ executable simple-ci-exe
       app
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-      base >=4.7 && <5
     , simple-ci
   default-language: Haskell2010
 
 test-suite simple-ci-test
+  import: options
   type: exitcode-stdio-1.0
   main-is: Spec.hs
   other-modules:
@@ -54,6 +79,6 @@ test-suite simple-ci-test
       test
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-      base >=4.7 && <5
     , simple-ci
+    , hspec
   default-language: Haskell2010
