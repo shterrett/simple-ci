@@ -1,12 +1,17 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Docker where
 
@@ -14,10 +19,10 @@ import Data.Aeson ((.:))
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Types qualified as Aeson.Types
 import Data.Char (toUpper)
-import Data.Generics.Labels ()
+import Data.Generics.Labels (Field')
+import Network.HTTP.Client qualified as Client
 import Network.HTTP.Simple qualified as HTTP
 import RIO
-import Socket (newManager)
 
 newtype Image = Image {unImage :: Text}
   deriving (Eq, Show, Generic)
@@ -82,9 +87,8 @@ parseResponse p response = do
         Aeson.Types.parseEither p value
   either throwString pure result
 
-createContainer :: CreateContainerOptions -> IO ContainerId
-createContainer options = do
-  manager <- newManager "/var/run/docker.sock"
+createContainerIO :: Client.Manager -> CreateContainerOptions -> IO ContainerId
+createContainerIO manager options = do
   let body = Aeson.toJSON options
   let req =
         HTTP.defaultRequest
@@ -96,9 +100,8 @@ createContainer options = do
         o .: "Id"
   HTTP.httpBS req >>= parseResponse parser
 
-startContainer :: ContainerId -> IO ()
-startContainer (ContainerId containerId) = do
-  manager <- newManager "/var/run/docker.sock"
+startContainerIO :: Client.Manager -> ContainerId -> IO ()
+startContainerIO manager (ContainerId containerId) = do
   let path = "/v1.40/containers/" <> containerId <> "/start"
   let req =
         HTTP.defaultRequest
@@ -106,3 +109,22 @@ startContainer (ContainerId containerId) = do
           & HTTP.setRequestManager manager
           & HTTP.setRequestMethod "POST"
   void $ HTTP.httpBS req
+
+class (Monad m) => Docker m where
+  createContainer :: CreateContainerOptions -> m ContainerId
+  startContainer :: ContainerId -> m ()
+
+instance
+  ( Field' "dockerManager" r Client.Manager
+  , Monad m
+  , MonadReader r m
+  , MonadIO m
+  ) =>
+  Docker m
+  where
+  createContainer options = do
+    mgr <- view #dockerManager
+    liftIO $ createContainerIO mgr options
+  startContainer cid = do
+    mgr <- view #dockerManager
+    liftIO $ startContainerIO mgr cid

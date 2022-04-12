@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE ImportQualifiedPost #-}
+{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE RecordWildCards #-}
 
@@ -7,7 +8,7 @@ module Core where
 
 import Control.Lens (filtered, folded)
 import Data.Generics.Labels ()
-import Docker (ContainerExitCode (..), Image)
+import Docker (ContainerExitCode (..), Docker (..), Image, createContainer, startContainer)
 import RIO
 import RIO.Map qualified as Map
 
@@ -58,7 +59,7 @@ data BuildResult
   | BuildFailed
   deriving (Show, Eq, Generic)
 
-progress :: Build -> IO Build
+progress :: (Docker m) => Build -> m Build
 progress build@Build {..} =
   case state of
     BuildFinished _ -> do
@@ -73,7 +74,10 @@ progress build@Build {..} =
           }
     BuildReady -> case buildHasNextStep build of
       Left result -> pure $ build {state = BuildFinished result}
-      Right s -> pure $ build {state = BuildRunning BuildRunningState {currentStep = s ^. #name}}
+      Right s -> do
+        let options = mempty & #image .~ (s ^. #image)
+        createContainer options >>= startContainer
+        pure $ build {state = BuildRunning BuildRunningState {currentStep = s ^. #name}}
 
 buildHasNextStep :: Build -> Either BuildResult Step
 buildHasNextStep build =
