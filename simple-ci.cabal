@@ -54,6 +54,7 @@ library
     Core
     Docker
     Socket
+    Runner
   other-modules:
       Paths_simple_ci
   hs-source-dirs:

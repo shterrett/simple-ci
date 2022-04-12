@@ -7,10 +7,11 @@
 module Main where
 
 import Core
-import Docker (Docker, Image (..))
+import Docker (ContainerExitCode (..), Image (..))
 import Network.HTTP.Client qualified as Client
 import RIO
 import RIO.Map qualified as Map
+import Runner (Runner (..))
 import Socket (newManager)
 import System.Process.Typed qualified as Process
 import Test.Hspec
@@ -21,6 +22,8 @@ main = hspec $ do
     describe "SimpleCI" $ do
       it "runs a build" $ do
         runIntegrationTest testRunSuccess
+      it "fails a build" $ do
+        runIntegrationTest testRunFailure
 
 testRunSuccess :: ReaderT IntegrationTestEnv IO ()
 testRunSuccess = do
@@ -29,17 +32,13 @@ testRunSuccess = do
     result ^. #state `shouldBe` BuildFinished BuildSucceeded
     Map.elems (result ^. #completedSteps) `shouldBe` [StepSucceeded, StepSucceeded]
 
-runBuild :: (MonadIO m, Docker m) => Build -> m Build
-runBuild build = do
-  newBuild <- progress build
-  case newBuild ^. #state of
-    BuildFinished _ -> pure newBuild
-    _ -> do
-      threadDelay oneSecond
-      runBuild newBuild
-  where
-    oneSecond :: Int
-    oneSecond = 1 * 1000 * 1000
+testRunFailure :: ReaderT IntegrationTestEnv IO ()
+testRunFailure = do
+  build <- prepareBuild $ makePipeline $ singleton $ makeStep "Should fail" "ubuntu" (singleton "exit 1")
+  result <- runBuild build
+  liftIO $ do
+    result ^. #state `shouldBe` BuildFinished BuildFailed
+    Map.elems (result ^. #completedSteps) `shouldBe` [StepFailed (ContainerExitCode 1)]
 
 makeStep :: Text -> Text -> NonEmpty Text -> Step
 makeStep n img cmds =
@@ -55,8 +54,8 @@ makePipeline = Pipeline
 testPipeline :: Pipeline
 testPipeline =
   makePipeline
-    ( makeStep "first step" "ubuntu" ("date" :| [])
-        :| [makeStep "second step" "ubuntu" ("uname -r" :| [])]
+    ( makeStep "first step" "ubuntu" (singleton "date")
+        :| [makeStep "second step" "ubuntu" (singleton "uname -r")]
     )
 
 testBuild :: Build
@@ -82,3 +81,6 @@ runIntegrationTest m =
 cleanupDocker :: IO ()
 cleanupDocker = void $ do
   Process.readProcessStdout "docker rm -f $(docker ps -aq --filter \"label=quad\")"
+
+singleton :: a -> NonEmpty a
+singleton a = a :| []

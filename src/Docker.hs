@@ -31,6 +31,12 @@ newtype Image = Image {unImage :: Text}
 newtype ContainerExitCode = ContainerExitCode {unContainerExitCode :: Int}
   deriving (Show, Eq, Generic)
 
+data ContainerStatus
+  = ContainerRunning
+  | ContainerExited ContainerExitCode
+  | ContainerOther Text
+  deriving (Show, Eq, Generic)
+
 data CreateContainerOptions = CreateContainerOptions
   { image :: Image
   , tty :: Bool
@@ -113,6 +119,7 @@ startContainerIO manager (ContainerId containerId) = do
 class (Monad m) => Docker m where
   createContainer :: CreateContainerOptions -> m ContainerId
   startContainer :: ContainerId -> m ()
+  containerStatus :: ContainerId -> m ContainerStatus
 
 instance
   ( Field' "dockerManager" r Client.Manager
@@ -128,3 +135,4 @@ instance
   startContainer cid = do
     mgr <- view #dockerManager
     liftIO $ startContainerIO mgr cid
+  containerStatus = undefined

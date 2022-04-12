@@ -6,9 +6,9 @@
 
 module Core where
 
-import Control.Lens (filtered, folded)
+import Control.Lens (at, filtered, folded, (?~))
 import Data.Generics.Labels ()
-import Docker (ContainerExitCode (..), Docker (..), Image, createContainer, startContainer)
+import Docker (ContainerExitCode (..), ContainerId, ContainerStatus (..), Docker (..), Image, createContainer, startContainer)
 import RIO
 import RIO.Map qualified as Map
 
@@ -51,12 +51,14 @@ data BuildState
 
 data BuildRunningState = BuildRunningState
   { currentStep :: StepName
+  , containerId :: ContainerId
   }
   deriving (Show, Eq, Generic)
 
 data BuildResult
   = BuildSucceeded
   | BuildFailed
+  | BuildUnexpectedState Text
   deriving (Show, Eq, Generic)
 
 progress :: (Docker m) => Build -> m Build
@@ -65,19 +67,21 @@ progress build@Build {..} =
     BuildFinished _ -> do
       undefined
     BuildRunning s -> do
-      let exit = ContainerExitCode 0
-          result = exitCodeToStepResult exit
-      pure
-        build
-          { state = BuildReady
-          , completedSteps = Map.insert (s ^. #currentStep) result (build ^. #completedSteps)
-          }
+      status <- containerStatus (s ^. #containerId)
+      case status of
+        ContainerRunning -> pure build
+        ContainerExited ec ->
+          pure $
+            build & #state .~ BuildReady
+              & #completedSteps . at (s ^. #currentStep) ?~ (exitCodeToStepResult ec)
+        ContainerOther t -> pure $ build & #state .~ BuildFinished (BuildUnexpectedState t)
     BuildReady -> case buildHasNextStep build of
       Left result -> pure $ build {state = BuildFinished result}
       Right s -> do
         let options = mempty & #image .~ (s ^. #image)
-        createContainer options >>= startContainer
-        pure $ build {state = BuildRunning BuildRunningState {currentStep = s ^. #name}}
+        containerId <- createContainer options
+        startContainer containerId
+        pure $ build {state = BuildRunning BuildRunningState {currentStep = s ^. #name, containerId = containerId}}
 
 buildHasNextStep :: Build -> Either BuildResult Step
 buildHasNextStep build =
