@@ -9,7 +9,7 @@ module Core where
 
 import Control.Lens (at, filtered, folded, (?~))
 import Data.Generics.Labels ()
-import Docker (ContainerExitCode (..), ContainerId, ContainerStatus (..), Docker (..), Image, createContainer, mkContainerOptions, startContainer)
+import Docker (ContainerExitCode (..), ContainerId, ContainerStatus (..), Docker (..), Image, Volume, createContainer, mkContainerOptions, startContainer)
 import RIO
 import RIO.Map qualified as Map
 import RIO.NonEmpty qualified as NonEmpty
@@ -30,11 +30,12 @@ data Build = Build
   , state :: BuildState
   , -- Why isn't this [StepResult]?
     completedSteps :: Map StepName StepResult
-    -- perhaps
+  , -- perhaps
     -- completedSteps :: [StepResult]
     -- pendingStep :: [Step]
     -- currentStep :: Maybe Step
     -- invariant: completedSteps <> pendingStep <> completedSteps == Pipeline?
+    volume :: Volume
   }
   deriving (Eq, Show, Generic)
 
@@ -84,6 +85,7 @@ progress build@Build {..} =
         let options =
               mkContainerOptions
                 (s ^. #image)
+                volume
                 (mkScript $ s ^. #commands)
         containerId <- createContainer options
         startContainer containerId

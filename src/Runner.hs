@@ -7,7 +7,7 @@
 module Runner where
 
 import Core (Build (..), BuildState (..), Pipeline, progress)
-import Docker (Docker)
+import Docker (Docker (..))
 import RIO
 
 class (Monad m) => Runner m where
@@ -25,10 +25,12 @@ instance (Monad m, MonadIO m, Docker m) => Runner m where
     where
       oneSecond :: Int
       oneSecond = 1 * 1000 * 1000
-  prepareBuild p =
+  prepareBuild p = do
+    v <- createVolume
     pure $
       Build
         { pipeline = p
         , state = BuildReady
         , completedSteps = mempty
+        , volume = v
         }

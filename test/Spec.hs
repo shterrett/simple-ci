@@ -7,7 +7,7 @@
 module Main where
 
 import Core
-import Docker (ContainerExitCode (..), Image (..))
+import Docker (ContainerExitCode (..), Image (..), Volume (..))
 import Network.HTTP.Client qualified as Client
 import RIO
 import RIO.Map qualified as Map
@@ -24,6 +24,8 @@ main = hspec $ do
         runIntegrationTest testRunSuccess
       it "fails a build" $ do
         runIntegrationTest testRunFailure
+      it "creates a shared workspace" $ do
+        runIntegrationTest testSharedWorkspace
 
 testRunSuccess :: ReaderT IntegrationTestEnv IO ()
 testRunSuccess = do
@@ -39,6 +41,20 @@ testRunFailure = do
   liftIO $ do
     result ^. #state `shouldBe` BuildFinished BuildFailed
     Map.elems (result ^. #completedSteps) `shouldBe` [StepFailed (ContainerExitCode 1)]
+
+testSharedWorkspace :: ReaderT IntegrationTestEnv IO ()
+testSharedWorkspace =
+  do
+    build <-
+      prepareBuild $
+        makePipeline $
+          (makeStep "Create File" "ubuntu" $ singleton "echo hello > test")
+            :| [makeStep "ReadFile" "ubuntu" $ singleton "cat test"]
+    result <- runBuild build
+    liftIO $ do
+      result ^. #state `shouldBe` BuildFinished BuildSucceeded
+      Map.elems (result ^. #completedSteps)
+        `shouldBe` [StepSucceeded, StepSucceeded]
 
 makeStep :: Text -> Text -> NonEmpty Text -> Step
 makeStep n img cmds =
@@ -64,6 +80,7 @@ testBuild =
     { pipeline = testPipeline
     , state = BuildReady
     , completedSteps = mempty
+    , volume = Volume ""
     }
 
 data IntegrationTestEnv = IntegrationTestEnv
@@ -79,8 +96,9 @@ runIntegrationTest m =
       m
 
 cleanupDocker :: IO ()
-cleanupDocker = void $ do
-  Process.readProcessStdout "docker rm -f $(docker ps -aq --filter \"label=quad\")"
+cleanupDocker = do
+  void $ Process.readProcessStdout "docker rm -f $(docker ps -aq --filter \"label=quad\")"
+  void $ Process.readProcessStdout "docker volume rm -f $(docker volume ls -q --filter \"label=quad\")"
 
 singleton :: a -> NonEmpty a
 singleton a = a :| []
