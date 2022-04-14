@@ -42,6 +42,7 @@ data CreateContainerOptions = CreateContainerOptions
   , tty :: Bool
   , labels :: [(Text, Text)]
   , cmd :: Text
+  , env :: ContainerEnv
   , entrypoint :: Text
   }
   deriving (Show, Eq, Generic)
@@ -55,9 +56,23 @@ instance Monoid CreateContainerOptions where
       { image = Image "ubuntu"
       , tty = True
       , labels = [("quad", "")]
-      , cmd = "echo hello"
+      , cmd = "echo \"$QUAD_SCRIPT\" | /bin/sh"
+      , env = ContainerEnv []
       , entrypoint = "/bin/sh"
       }
+
+newtype ContainerEnv = ContainerEnv {unEnv :: [(Text, Text)]}
+  deriving (Eq, Show, Generic)
+
+instance Aeson.ToJSON ContainerEnv where
+  toJSON (ContainerEnv envs) =
+    Aeson.toJSON $ (\(var, val) -> var <> "=" <> val) <$> envs
+
+mkContainerOptions :: Image -> Text -> CreateContainerOptions
+mkContainerOptions image script =
+  mempty
+    & #image .~ image
+    & #env . #unEnv .~ [("QUAD_SCRIPT", script)]
 
 instance Aeson.ToJSON CreateContainerOptions where
   toEncoding =
@@ -93,28 +108,41 @@ parseResponse p response = do
         Aeson.Types.parseEither p value
   either throwString pure result
 
-createContainerIO :: Client.Manager -> CreateContainerOptions -> IO ContainerId
-createContainerIO manager options = do
+type RequestBuilder = Text -> HTTP.Request
+
+createContainerIO :: RequestBuilder -> CreateContainerOptions -> IO ContainerId
+createContainerIO buildReq options = do
   let body = Aeson.toJSON options
   let req =
-        HTTP.defaultRequest
-          & HTTP.setRequestManager manager
-          & HTTP.setRequestPath "/v1.40/containers/create"
+        buildReq "/v1.40/containers/create"
           & HTTP.setRequestMethod "POST"
           & HTTP.setRequestBodyJSON body
   let parser = Aeson.withObject "create-container" $ \o ->
         o .: "Id"
   HTTP.httpBS req >>= parseResponse parser
 
-startContainerIO :: Client.Manager -> ContainerId -> IO ()
-startContainerIO manager (ContainerId containerId) = do
+startContainerIO :: RequestBuilder -> ContainerId -> IO ()
+startContainerIO buildReq (ContainerId containerId) = do
   let path = "/v1.40/containers/" <> containerId <> "/start"
   let req =
-        HTTP.defaultRequest
+        buildReq path
           & HTTP.setRequestPath (encodeUtf8 path)
-          & HTTP.setRequestManager manager
           & HTTP.setRequestMethod "POST"
   void $ HTTP.httpBS req
+
+containerStatusIO :: RequestBuilder -> ContainerId -> IO ContainerStatus
+containerStatusIO buildReq (ContainerId containerId) = do
+  let parser = Aeson.withObject "container-inspect" $ \o -> do
+        state <- o .: "State"
+        status <- o .: "Status"
+        case status of
+          "running" -> pure ContainerRunning
+          "exited" -> do
+            code <- state .: "ExitCode"
+            pure $ ContainerExited (ContainerExitCode code)
+          other -> pure $ ContainerOther other
+  let req = buildReq $ "/v1.40/containers/" <> containerId <> "/json"
+  HTTP.httpBS req >>= parseResponse parser
 
 class (Monad m) => Docker m where
   createContainer :: CreateContainerOptions -> m ContainerId
@@ -130,9 +158,17 @@ instance
   Docker m
   where
   createContainer options = do
-    mgr <- view #dockerManager
-    liftIO $ createContainerIO mgr options
+    builder <- requestBuilder <$> view #dockerManager
+    liftIO $ createContainerIO builder options
   startContainer cid = do
-    mgr <- view #dockerManager
-    liftIO $ startContainerIO mgr cid
-  containerStatus = undefined
+    builder <- requestBuilder <$> view #dockerManager
+    liftIO $ startContainerIO builder cid
+  containerStatus cid = do
+    builder <- requestBuilder <$> view #dockerManager
+    liftIO $ containerStatusIO builder cid
+
+requestBuilder :: Client.Manager -> RequestBuilder
+requestBuilder manager = \path ->
+  HTTP.defaultRequest
+    & HTTP.setRequestManager manager
+    & HTTP.setRequestPath (encodeUtf8 path)

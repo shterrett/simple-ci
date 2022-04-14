@@ -2,15 +2,18 @@
 {-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
 module Core where
 
 import Control.Lens (at, filtered, folded, (?~))
 import Data.Generics.Labels ()
-import Docker (ContainerExitCode (..), ContainerId, ContainerStatus (..), Docker (..), Image, createContainer, startContainer)
+import Docker (ContainerExitCode (..), ContainerId, ContainerStatus (..), Docker (..), Image, createContainer, mkContainerOptions, startContainer)
 import RIO
 import RIO.Map qualified as Map
+import RIO.NonEmpty qualified as NonEmpty
+import RIO.Text qualified as Text
 
 data Pipeline = Pipeline {steps :: NonEmpty Step}
   deriving (Eq, Show, Generic)
@@ -78,10 +81,16 @@ progress build@Build {..} =
     BuildReady -> case buildHasNextStep build of
       Left result -> pure $ build {state = BuildFinished result}
       Right s -> do
-        let options = mempty & #image .~ (s ^. #image)
+        let options =
+              mkContainerOptions
+                (s ^. #image)
+                (mkScript $ s ^. #commands)
         containerId <- createContainer options
         startContainer containerId
         pure $ build {state = BuildRunning BuildRunningState {currentStep = s ^. #name, containerId = containerId}}
+  where
+    mkScript :: NonEmpty Text -> Text
+    mkScript = Text.unlines . ("set -ex" :) . NonEmpty.toList
 
 buildHasNextStep :: Build -> Either BuildResult Step
 buildHasNextStep build =
