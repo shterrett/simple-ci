@@ -20,6 +20,7 @@ import Data.Aeson qualified as Aeson
 import Data.Aeson.Types qualified as Aeson.Types
 import Data.Char (toUpper)
 import Data.Generics.Labels (Field')
+import Data.Time.Clock.POSIX qualified as Time
 import Network.HTTP.Client qualified as Client
 import Network.HTTP.Simple qualified as HTTP
 import RIO
@@ -180,11 +181,22 @@ createVolumeIO buildReq = do
 
   HTTP.httpBS req >>= parseResponse parser
 
+fetchLogsIO :: RequestBuilder -> FetchLogsOptions -> IO ByteString
+fetchLogsIO = undefined
+
+data FetchLogsOptions = FetchLogsOptions
+  { container :: ContainerId
+  , since :: Time.POSIXTime
+  , until :: Time.POSIXTime
+  }
+  deriving (Show, Eq, Generic)
+
 class (Monad m) => Docker m where
   createContainer :: CreateContainerOptions -> m ContainerId
   startContainer :: ContainerId -> m ()
   containerStatus :: ContainerId -> m ContainerStatus
   createVolume :: m Volume
+  fetchLogs :: FetchLogsOptions -> m ByteString
 
 instance
   ( Field' "dockerManager" r Client.Manager
@@ -206,6 +218,9 @@ instance
   createVolume = do
     builder <- requestBuilder <$> view #dockerManager
     liftIO $ createVolumeIO builder
+  fetchLogs options = do
+    builder <- requestBuilder <$> view #dockerManager
+    liftIO $ fetchLogsIO builder options
 
 requestBuilder :: Client.Manager -> RequestBuilder
 requestBuilder manager = \path ->

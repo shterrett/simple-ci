@@ -6,15 +6,18 @@
 
 module Runner where
 
-import Core (Build (..), BuildState (..), Pipeline, progress)
+import Core (Build (..), BuildState (..), Log, Pipeline, progress)
 import Docker (Docker (..))
 import RIO
+
+class (Monad m) => Hooks m where
+  logCollected :: Log -> m ()
 
 class (Monad m) => Runner m where
   runBuild :: Build -> m Build
   prepareBuild :: Pipeline -> m Build
 
-instance (Monad m, MonadIO m, Docker m) => Runner m where
+instance (Monad m, MonadIO m, Hooks m, Docker m) => Runner m where
   runBuild build = do
     newBuild <- progress build
     case newBuild ^. #state of

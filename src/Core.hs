@@ -1,15 +1,21 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ImportQualifiedPost #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Core where
 
 import Control.Lens (at, filtered, folded, (?~))
 import Data.Generics.Labels ()
-import Docker (ContainerExitCode (..), ContainerId, ContainerStatus (..), Docker (..), Image, Volume, createContainer, mkContainerOptions, startContainer)
+import Data.Time.Clock.POSIX qualified as Time
+import Docker (ContainerExitCode (..), ContainerId, ContainerStatus (..), Docker (..), FetchLogsOptions (..), Image, Volume, createContainer, mkContainerOptions, startContainer)
 import RIO
 import RIO.Map qualified as Map
 import RIO.NonEmpty qualified as NonEmpty
@@ -106,3 +112,84 @@ buildHasNextStep build =
 
 exitCodeToStepResult :: ContainerExitCode -> StepResult
 exitCodeToStepResult cec@(ContainerExitCode ec) = if ec == 0 then StepSucceeded else StepFailed cec
+
+data Log = Log
+  { output :: ByteString
+  , step :: StepName
+  }
+
+type LogCollection = Map StepName CollectionStatus
+
+{- | Ready when the container hasn't started
+ Collecting when the container is running
+ Finished when the container is exited
+ Why is this a separate sum type? What if it gets out of sync?
+ Simple haskell doesn't mean don't encode invariants in the type system!
+-}
+data CollectionStatus
+  = CollectionReady
+  | CollectingLogs ContainerId Time.POSIXTime
+  | CollectionFinished
+  deriving (Eq, Show, Generic)
+
+initLogCollection :: Pipeline -> LogCollection
+initLogCollection pipeline =
+  Map.fromList $
+    pipeline ^.. #steps . folded . #name . to (,CollectionReady)
+
+updateCollection ::
+  BuildState ->
+  Time.POSIXTime ->
+  LogCollection ->
+  LogCollection
+updateCollection state lastCollection =
+  Map.mapWithKey $ \step -> \case
+    CollectionReady -> update step 0 CollectionReady
+    CollectingLogs _ _ -> update step lastCollection CollectionFinished
+    CollectionFinished -> CollectionFinished
+  where
+    update :: StepName -> Time.POSIXTime -> CollectionStatus -> CollectionStatus
+    update step since nextState =
+      case state of
+        BuildRunning s ->
+          if s ^. #currentStep == step
+            then CollectingLogs (s ^. #containerId) since
+            else nextState
+        _ -> nextState
+
+collectLogs ::
+  ( Docker m
+  ) =>
+  Time.POSIXTime ->
+  LogCollection ->
+  Build ->
+  m (LogCollection, [Log])
+collectLogs collectUntil collection build = do
+  logs <- runCollection collection collectUntil
+  let newCollection = updateCollection (build ^. #state) collectUntil collection
+  pure (newCollection, logs)
+
+runCollection ::
+  forall m.
+  ( Docker m
+  ) =>
+  LogCollection ->
+  Time.POSIXTime ->
+  m [Log]
+runCollection collection collectUntil = do
+  logs <- Map.traverseWithKey f collection
+  pure $ concat (Map.elems logs)
+  where
+    f :: StepName -> CollectionStatus -> m [Log]
+    f step = \case
+      CollectionReady -> pure []
+      CollectionFinished -> pure []
+      CollectingLogs container since -> do
+        let options =
+              FetchLogsOptions
+                { container = container
+                , since = since
+                , until = collectUntil
+                }
+        output <- fetchLogs options
+        pure [Log {step = step, output = output}]
