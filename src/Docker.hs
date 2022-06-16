@@ -182,7 +182,17 @@ createVolumeIO buildReq = do
   HTTP.httpBS req >>= parseResponse parser
 
 fetchLogsIO :: RequestBuilder -> FetchLogsOptions -> IO ByteString
-fetchLogsIO = undefined
+fetchLogsIO buildReq options = do
+  let timestampToText t = tshow (round t :: Int)
+      url =
+        "/containers/"
+          <> options ^. #container . #unContainerId
+          <> "/logs?stdout=true$stderr=true&since="
+          <> timestampToText (options ^. #since)
+          <> "&until="
+          <> timestampToText (options ^. #until)
+  res <- HTTP.httpBS $ buildReq url
+  pure $ HTTP.getResponseBody res
 
 data FetchLogsOptions = FetchLogsOptions
   { container :: ContainerId
